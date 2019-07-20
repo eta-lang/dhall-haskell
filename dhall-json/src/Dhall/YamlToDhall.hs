@@ -29,9 +29,8 @@ import qualified Dhall.Core as Dhall
 import Dhall.Yaml.Eta ( yamlToJson, showYaml )
 #else
 import Data.Aeson (Value)
-import Data.Bifunctor (bimap)
 import qualified Data.ByteString.Char8 as BS8
-import qualified Data.Yaml
+import qualified Data.YAML.Aeson as YAML
 #endif
 
 -- | Options to parametrize conversion
@@ -68,10 +67,9 @@ dhallFromYaml Options{..} yaml = do
 
 #if !defined(ETA_VERSION)
 yamlToJson :: ByteString -> Either String Data.Aeson.Value
-yamlToJson =
-  bimap Data.Yaml.prettyPrintParseException id . Data.Yaml.decodeEither'
+yamlToJson = YAML.decode1Strict
 
 showYaml :: Value -> String
-showYaml value = BS8.unpack (Data.Yaml.encode value)
+showYaml value = BS8.unpack (YAML.encode1Strict value)
 #endif
 
