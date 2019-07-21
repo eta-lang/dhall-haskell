@@ -22,6 +22,7 @@ import qualified Data.ByteString.Lazy
 import qualified Data.Vector
 import qualified Dhall
 import qualified Options.Applicative
+import qualified Data.HashSet as HashSet
 #if defined(ETA_VERSION)
 import Dhall.Yaml.Eta ( jsonToYaml )
 #else
@@ -29,7 +30,8 @@ import qualified Data.YAML.Aeson as YAML
 import qualified Data.YAML as Y
 import qualified Data.YAML.Event as YE
 import qualified Data.YAML.Token as YT
-import qualified Data.Text
+import qualified Data.Text as Text
+import           Data.Char (isNumber)
 #endif
 
 
@@ -104,19 +106,36 @@ jsonToYaml json documents quoted =
          $ Data.Vector.toList elems
     _ -> bsToStrict (YAML.encodeValue' schemaEncoder YT.UTF8 [json])
   where
-    defaultSchemaEncoder = Y.coreSchemaEncoder
+    defaultSchemaEncoder = Y.setScalarStyle style Y.defaultSchemaEncoder
+
+    defaultEncodeStr s = case () of
+      ()
+        | "\n" `Text.isInfixOf` s -> Right (YE.untagged, YE.Literal YE.Clip YE.IndentAuto, s)
+        | isSpecialString s -> Right (YE.untagged, YE.SingleQuoted, s)
+        | otherwise -> Right (YE.untagged, YE.Plain, s)
+
+    style s = case s of
+      Y.SNull         -> Right (YE.untagged, YE.Plain, "null")
+      Y.SBool  bool   -> Right (YE.untagged, YE.Plain, Y.encodeBool bool)
+      Y.SFloat double -> Right (YE.untagged, YE.Plain, Y.encodeDouble double)
+      Y.SInt   int    -> Right (YE.untagged, YE.Plain, Y.encodeInt int)
+      Y.SStr   text   -> defaultEncodeStr text
+      Y.SUnknown t v  -> Right (t, YE.SingleQuoted, v)
     
+    specialStrings :: HashSet.HashSet Text.Text
+    specialStrings = HashSet.fromList $ Text.words
+            "y Y yes Yes YES n N no No NO true True TRUE false False FALSE on On ON off Off OFF null Null NULL ~ *"
+
+    isSpecialString :: Text.Text -> Bool
+    isSpecialString s = s `HashSet.member` specialStrings || all isNumber (Text.unpack s)
+
     customStyle (Y.SStr s) = case () of
         ()
-            | "\n" `Data.Text.isInfixOf` s -> Right (YE.untagged, YE.Literal YE.Clip YE.IndentAuto, s)
+            | "\n" `Text.isInfixOf` s -> Right (YE.untagged, YE.Literal YE.Clip YE.IndentAuto, s)
             | otherwise -> Right (YE.untagged, YE.SingleQuoted, s)
     customStyle scalar =  (Y.schemaEncoderScalar defaultSchemaEncoder) scalar
     
-    setScalarStyle sty encoder = encoder {Y.schemaEncoderScalar = sty}
-    
-    customSchemaEncoder = setScalarStyle 
-                            customStyle
-                            defaultSchemaEncoder
+    customSchemaEncoder = Y.setScalarStyle customStyle defaultSchemaEncoder
     
     schemaEncoder = if quoted 
         then customSchemaEncoder 

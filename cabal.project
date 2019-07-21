@@ -3,7 +3,7 @@ packages: ./dhall ./dhall-bash ./dhall-json ./dhall-lsp-server
 source-repository-package
     type: git
     location: https://github.com/vijayphoenix/HsYAML.git
-    tag: ce0e57a253805f447510f440182f44bf91d96f08
+    tag: 50bad75aefd89b600cd5b4714c39ee38efef756d
 
 source-repository-package
     type: git
