@@ -1,0 +1,4 @@
+packages: dhall dhall-bash
+
+constraints: cryptonite == 0.25,
+             aeson == 1.2.4.0
