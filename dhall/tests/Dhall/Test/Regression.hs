@@ -6,6 +6,7 @@
 module Dhall.Test.Regression where
 
 import qualified Control.Exception
+import qualified Data.Text.IO
 import qualified Data.Text.Lazy.IO
 import qualified Data.Text.Prettyprint.Doc
 import qualified Data.Text.Prettyprint.Doc.Render.Text
@@ -21,8 +22,8 @@ import qualified System.Timeout
 import qualified Test.Tasty
 import qualified Test.Tasty.HUnit
 
-import Dhall.Import (Imported)
-import Dhall.Parser (Src)
+import Dhall.Import (Imported, MissingImports(..))
+import Dhall.Parser (Src, SourcedException(..))
 import Dhall.TypeCheck (TypeError, X)
 import Test.Tasty (TestTree)
 import Test.Tasty.HUnit ((@?=))
@@ -37,6 +38,8 @@ tests =
         , issue201
         , issue216
         , issue253
+        , issue1131a
+        , issue1131b
         , parsing0
         , typeChecking0
         , typeChecking1
@@ -90,8 +93,13 @@ issue126 = Test.Tasty.HUnit.testCase "Issue #126" (do
 issue151 :: TestTree
 issue151 = Test.Tasty.HUnit.testCase "Issue #151" (do
     let shouldNotTypeCheck text = do
-            let handler :: Imported (TypeError Src X) -> IO Bool
-                handler _ = return True
+            let handler :: SourcedException MissingImports -> IO Bool
+                handler (SourcedException _ (MissingImports [e])) =
+                    case Control.Exception.fromException e :: Maybe (Imported (TypeError Src X)) of
+                        Just _ -> return True
+                        Nothing -> return False
+                handler _ = do
+                    return True
 
             let typeCheck = do
                     _ <- Util.code text
@@ -134,7 +142,8 @@ issue201 = Test.Tasty.HUnit.testCase "Issue #201" (do
 issue216 :: TestTree
 issue216 = Test.Tasty.HUnit.testCase "Issue #216" (do
     -- Verify that pretty-printing preserves string interpolation
-    e <- Util.code "./tests/regression/issue216a.dhall"
+    source <- Data.Text.IO.readFile "./tests/regression/issue216b.dhall"
+    e <- Util.code source
     let doc       = Data.Text.Prettyprint.Doc.pretty e
     let docStream = Data.Text.Prettyprint.Doc.layoutSmart Dhall.Pretty.layoutOpts doc
     let text0 = Data.Text.Prettyprint.Doc.Render.Text.renderLazy docStream
@@ -153,6 +162,14 @@ issue253 = Test.Tasty.HUnit.testCase "Issue #253" (do
     -- infinitely loop
     Just _ <- System.Timeout.timeout 1000000 (Control.Exception.evaluate $! result)
     return () )
+
+issue1131a :: TestTree
+issue1131a = Test.Tasty.HUnit.testCase "Issue #1131 a"
+    (Util.assertDoesntTypeCheck "toMap {=} : <>.x")
+
+issue1131b :: TestTree
+issue1131b = Test.Tasty.HUnit.testCase "Issue #1131 b"
+    (Util.assertDoesntTypeCheck "toMap {=} : List {mapKey : Text, mapValue : 0}")
 
 parsing0 :: TestTree
 parsing0 = Test.Tasty.HUnit.testCase "Parsing regression #0" (do

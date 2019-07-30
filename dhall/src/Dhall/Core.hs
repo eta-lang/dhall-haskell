@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns       #-}
 {-# LANGUAGE CPP                #-}
+{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DeriveTraversable  #-}
@@ -46,6 +47,7 @@ module Dhall.Core (
     , isNormalized
     , isNormalizedWith
     , denote
+    , shallowDenote
     , freeIn
 
     -- * Pretty-printing
@@ -68,6 +70,7 @@ module Dhall.Core (
 import Control.Applicative (Applicative(..), (<$>))
 #endif
 import Control.Applicative (empty)
+import Control.DeepSeq (NFData)
 import Control.Exception (Exception)
 import Control.Monad.IO.Class (MonadIO(..))
 import Crypto.Hash (SHA256)
@@ -88,6 +91,8 @@ import Dhall.Set (Set)
 import Dhall.Src (Src)
 import {-# SOURCE #-} Dhall.Pretty.Internal
 import GHC.Generics (Generic)
+import Instances.TH.Lift ()
+import Language.Haskell.TH.Syntax (Lift)
 import Numeric.Natural (Natural)
 import Prelude hiding (succ)
 
@@ -126,7 +131,9 @@ import qualified Text.Printf
     Dhall is not a dependently typed language
 -}
 data Const = Type | Kind | Sort
-    deriving (Show, Eq, Ord, Data, Bounded, Enum, Generic)
+    deriving (Show, Eq, Ord, Data, Bounded, Enum, Generic, NFData)
+
+instance Lift Const
 
 instance Pretty Const where
     pretty = Pretty.unAnnotate . prettyConst
@@ -138,7 +145,7 @@ instance Pretty Const where
     @Directory { components = [ "baz", "bar", "foo" ] }@
 -}
 newtype Directory = Directory { components :: [Text] }
-    deriving (Eq, Generic, Ord, Show)
+    deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Semigroup Directory where
     Directory components₀ <> Directory components₁ =
@@ -153,7 +160,7 @@ instance Pretty Directory where
 data File = File
     { directory :: Directory
     , file      :: Text
-    } deriving (Eq, Generic, Ord, Show)
+    } deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Pretty File where
     pretty (File {..}) =
@@ -174,7 +181,7 @@ data FilePrefix
     -- ^ Path relative to @..@
     | Home
     -- ^ Path relative to @~@
-    deriving (Eq, Generic, Ord, Show)
+    deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Pretty FilePrefix where
     pretty Absolute = ""
@@ -182,7 +189,7 @@ instance Pretty FilePrefix where
     pretty Parent   = ".."
     pretty Home     = "~"
 
-data Scheme = HTTP | HTTPS deriving (Eq, Generic, Ord, Show)
+data Scheme = HTTP | HTTPS deriving (Eq, Generic, Ord, Show, NFData)
 
 data URL = URL
     { scheme    :: Scheme
@@ -190,7 +197,7 @@ data URL = URL
     , path      :: File
     , query     :: Maybe Text
     , headers   :: Maybe (Expr Src Import)
-    } deriving (Eq, Generic, Ord, Show)
+    } deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Pretty URL where
     pretty (URL {..}) =
@@ -228,7 +235,7 @@ data ImportType
     | Env  Text
     -- ^ Environment variable
     | Missing
-    deriving (Eq, Generic, Ord, Show)
+    deriving (Eq, Generic, Ord, Show, NFData)
 
 parent :: File
 parent = File { directory = Directory { components = [ ".." ] }, file = "" }
@@ -267,13 +274,13 @@ instance Pretty ImportType where
 
 -- | How to interpret the import's contents (i.e. as Dhall code or raw text)
 data ImportMode = Code | RawText | Location
-  deriving (Eq, Generic, Ord, Show)
+  deriving (Eq, Generic, Ord, Show, NFData)
 
 -- | A `ImportType` extended with an optional hash for semantic integrity checks
 data ImportHashed = ImportHashed
     { hash       :: Maybe (Crypto.Hash.Digest SHA256)
     , importType :: ImportType
-    } deriving (Eq, Generic, Ord, Show)
+    } deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Semigroup ImportHashed where
     ImportHashed _ importType₀ <> ImportHashed hash importType₁ =
@@ -289,7 +296,7 @@ instance Pretty ImportHashed where
 data Import = Import
     { importHashed :: ImportHashed
     , importMode   :: ImportMode
-    } deriving (Eq, Generic, Ord, Show)
+    } deriving (Eq, Generic, Ord, Show, NFData)
 
 instance Semigroup Import where
     Import importHashed₀ _ <> Import importHashed₁ code =
@@ -337,7 +344,9 @@ instance Pretty Import where
     appear as a numeric suffix.
 -}
 data Var = V Text !Int
-    deriving (Data, Generic, Eq, Ord, Show)
+    deriving (Data, Generic, Eq, Ord, Show, NFData)
+
+instance Lift Var
 
 instance IsString Var where
     fromString str = V (fromString str) 0
@@ -424,7 +433,7 @@ data Expr s a
     | TextShow
     -- | > List                                     ~  List
     | List
-    -- | > ListLit (Just t ) [x, y, z]              ~  [x, y, z] : List t
+    -- | > ListLit (Just t ) [x, y, z]              ~  [x, y, z] : t
     --   > ListLit  Nothing  [x, y, z]              ~  [x, y, z]
     | ListLit (Maybe (Expr s a)) (Seq (Expr s a))
     -- | > ListAppend x y                           ~  x # y
@@ -484,7 +493,11 @@ data Expr s a
     | ImportAlt (Expr s a) (Expr s a)
     -- | > Embed import                             ~  import
     | Embed a
-    deriving (Eq, Ord, Foldable, Generic, Traversable, Show, Data)
+    deriving (Eq, Ord, Foldable, Generic, Traversable, Show, Data, NFData)
+-- NB: If you add a constructor to Expr, please also update the Arbitrary
+-- instance in Dhall.Test.QuickCheck.
+
+instance (Lift s, Lift a, Data s, Data a) => Lift (Expr s a)
 
 -- This instance is hand-written due to the fact that deriving
 -- it does not give us an INLINABLE pragma. We annotate this fmap
@@ -710,7 +723,9 @@ data Binding s a = Binding
     { variable   :: Text
     , annotation :: Maybe (Expr s a)
     , value      :: Expr s a
-    } deriving (Functor, Foldable, Generic, Traversable, Show, Eq, Ord, Data)
+    } deriving (Functor, Foldable, Generic, Traversable, Show, Eq, Ord, Data, NFData)
+
+instance (Lift s, Lift a, Data s, Data a) => Lift (Binding s a)
 
 instance Bifunctor Binding where
     first k (Binding a b c) = Binding a (fmap (first k) b) (first k c)
@@ -719,7 +734,9 @@ instance Bifunctor Binding where
 
 -- | The body of an interpolated @Text@ literal
 data Chunks s a = Chunks [(Text, Expr s a)] Text
-    deriving (Functor, Foldable, Generic, Traversable, Show, Eq, Ord, Data)
+    deriving (Functor, Foldable, Generic, Traversable, Show, Eq, Ord, Data, NFData)
+
+instance (Lift s, Lift a, Data s, Data a) => Lift (Chunks s a)
 
 instance Data.Semigroup.Semigroup (Chunks s a) where
     Chunks xysL zL <> Chunks         []    zR =
@@ -1188,8 +1205,8 @@ alphaNormalize = Dhall.Eval.alphaNormalize
     expressions before normalizing them since normalization can convert an
     ill-typed expression into a well-typed expression.
 
-    However, `normalize` will not fail if the expression is ill-typed and will
-    leave ill-typed sub-expressions unevaluated.
+    `normalize` can also fail with `error` if you normalize an ill-typed
+    expression
 -}
 
 normalize :: Eq a => Expr s a -> Expr t a
@@ -1288,6 +1305,10 @@ denote (Project a b         ) = Project (denote a) (fmap denote b)
 denote (ImportAlt a b       ) = ImportAlt (denote a) (denote b)
 denote (Embed a             ) = Embed a
 
+shallowDenote :: Expr s a -> Expr s a
+shallowDenote (Note _ e) = shallowDenote e
+shallowDenote         e  = e
+
 {-| Reduce an expression to its normal form, performing beta reduction and applying
     any custom definitions.
 
@@ -1302,11 +1323,19 @@ denote (Embed a             ) = Embed a
     That is, if the functions in custom context are not total then the Dhall language, evaluated
     with those functions is not total either.
 
+    `normalizeWith` can fail with an `error` if you normalize an ill-typed
+    expression
 -}
 normalizeWith :: Eq a => Maybe (ReifiedNormalizer a) -> Expr s a -> Expr t a
 normalizeWith (Just ctx) t = runIdentity (normalizeWithM (getReifiedNormalizer ctx) t)
 normalizeWith _          t = Dhall.Eval.nfEmpty t
 
+{-| This function generalizes `normalizeWith` by allowing the custom normalizer
+    to use an arbitrary `Monad`
+
+    `normalizeWithM` can fail with an `error` if you normalize an ill-typed
+    expression
+-}
 normalizeWithM
     :: (Monad m, Eq a) => NormalizerM m a -> Expr s a -> m (Expr t a)
 normalizeWithM ctx e0 = loop (denote e0)
@@ -1342,6 +1371,20 @@ normalizeWithM ctx e0 = loop (denote e0)
                     -- build/fold fusion for `List`
                     App (App ListBuild _) (App (App ListFold _) e') -> loop e'
 
+                    App NaturalFold (NaturalLit n) -> do
+                        let natural = Var (V "natural" 0)
+                        let go 0  x = x
+                            go n' x = go (n'-1) (App (Var (V "succ" 0)) x)
+                        let n' = go n (Var (V "zero" 0))
+                        pure
+                            (Lam "natural"
+                                (Const Type)
+                                (Lam "succ"
+                                    (Pi "_" natural natural)
+                                    (Lam "zero"
+                                        natural
+                                        n')))
+
                     -- build/fold fusion for `Natural`
                     App NaturalBuild (App NaturalFold e') -> loop e'
 
@@ -1362,7 +1405,7 @@ normalizeWithM ctx e0 = loop (denote e0)
                         lazyLoop !n = App succ' (lazyLoop (n - 1))
                     App NaturalBuild g -> loop (App (App (App g Natural) succ) zero)
                       where
-                        succ = Lam "x" Natural (NaturalPlus "x" (NaturalLit 1))
+                        succ = Lam "n" Natural (NaturalPlus "n" (NaturalLit 1))
 
                         zero = NaturalLit 0
                     App NaturalIsZero (NaturalLit n) -> pure (BoolLit (n == 0))
@@ -1399,7 +1442,7 @@ normalizeWithM ctx e0 = loop (denote e0)
                                     (ListAppend (ListLit Nothing (pure "a")) "as")
                                 )
 
-                        nil = ListLit (Just _A₀) empty
+                        nil = ListLit (Just (App List _A₀)) empty
                     App (App (App (App (App ListFold _) (ListLit _ xs)) t) cons) nil -> do
                       t' <- loop t
                       if boundedType t' then strict else lazy
@@ -1425,7 +1468,7 @@ normalizeWithM ctx e0 = loop (denote e0)
                         o = case Data.Sequence.viewr ys of
                                 _ :> y -> Some y
                                 _      -> App None t
-                    App (App ListIndexed _A₀) (ListLit _A₁ as₀) -> loop (ListLit t as₁)
+                    App (App ListIndexed _A₀) (ListLit _ as₀) -> loop (ListLit t as₁)
                       where
                         as₁ = Data.Sequence.mapWithIndex adapt as₀
 
@@ -1435,7 +1478,7 @@ normalizeWithM ctx e0 = loop (denote e0)
                                   , ("value", _A₀)
                                   ]
 
-                        t | null as₀  = Just _A₂
+                        t | null as₀  = Just (App List _A₂)
                           | otherwise = Nothing
 
                         adapt n a_ =
@@ -1447,7 +1490,7 @@ normalizeWithM ctx e0 = loop (denote e0)
                     App (App ListReverse t) (ListLit _ xs) ->
                         loop (ListLit m (Data.Sequence.reverse xs))
                       where
-                        m = if Data.Sequence.null xs then Just t else Nothing
+                        m = if Data.Sequence.null xs then Just (App List t) else Nothing
                     App (App (App (App (App OptionalFold _) (App None _)) _) _) nothing ->
                         loop nothing
                     App (App (App (App (App OptionalFold _) (Some x)) _) just) _ ->
@@ -1679,8 +1722,8 @@ normalizeWithM ctx e0 = loop (denote e0)
                 let keyValues = Data.Sequence.fromList (map entry (Dhall.Map.toList kvsX))
 
                 let listType = case t' of
-                        Just (App List itemType) | null keyValues ->
-                            Just itemType
+                        Just _ | null keyValues ->
+                            t'
                         _ ->
                             Nothing
 
@@ -1731,6 +1774,9 @@ textShow text = "\"" <> Data.Text.concatMap f text <> "\""
 
 {-| Returns `True` if two expressions are α-equivalent and β-equivalent and
     `False` otherwise
+
+    `judgmentallyEqual` can fail with an `error` if you compare ill-typed
+    expressions
 -}
 judgmentallyEqual :: Eq a => Expr s a -> Expr t a -> Bool
 judgmentallyEqual = Dhall.Eval.convEmpty
@@ -1750,10 +1796,19 @@ newtype ReifiedNormalizer a = ReifiedNormalizer
 --   Unlike `isNormalized`, this will fully normalize and traverse through the expression.
 --
 --   It is much more efficient to use `isNormalized`.
+--
+--  `isNormalizedWith` can fail with an `error` if you check an ill-typed
+--  expression
 isNormalizedWith :: (Eq s, Eq a) => Normalizer a -> Expr s a -> Bool
 isNormalizedWith ctx e = e == normalizeWith (Just (ReifiedNormalizer ctx)) e
 
 -- | Quickly check if an expression is in normal form
+--
+-- Given a well-typed expression @e@, @'isNormalized' e@ is equivalent to
+-- @e == 'normalize' e@.
+--
+-- Given an ill-typed expression, 'isNormalized' may fail with an error, or
+-- evaluate to either False or True!
 isNormalized :: Eq a => Expr s a -> Bool
 isNormalized e0 = loop (denote e0)
   where
@@ -1775,6 +1830,7 @@ isNormalized e0 = loop (denote e0)
           App (App OptionalBuild _) (App (App OptionalFold _) _) -> False
 
           App (App (App (App NaturalFold (NaturalLit _)) _) _) _ -> False
+          App NaturalFold (NaturalLit _) -> False
           App NaturalBuild _ -> False
           App NaturalIsZero (NaturalLit _) -> False
           App NaturalEven (NaturalLit _) -> False
@@ -1921,30 +1977,20 @@ isNormalized e0 = loop (denote e0)
                               Nothing -> True
                       _ -> True
               _ -> True
-      ToMap x t -> loop x && all loop t
-      Field r x -> loop r &&
-          case r of
-              RecordLit kvs ->
-                  case Dhall.Map.lookup x kvs of
-                      Just _  -> False
-                      Nothing -> True
-              Union kvs ->
-                  case Dhall.Map.lookup x kvs of
-                      Just _  -> False
-                      Nothing -> True
-              _ -> True
-      Project r xs -> loop r &&
-          case r of
-              RecordLit kvs ->
-                  case xs of
-                      Left  s -> not (all (flip Dhall.Map.member kvs) s) && Dhall.Set.isSorted s
-                      Right e' ->
-                          case e' of
-                              Record kts ->
-                                  loop (Project r (Left (Dhall.Set.fromSet (Dhall.Map.keysSet kts))))
-                              _ ->
-                                  False
-              _ -> not (null xs)
+      ToMap x t -> case x of
+          RecordLit _ -> False
+          _ -> loop x && all loop t
+      Field r _ -> case r of
+          RecordLit _ -> False
+          _ -> loop r
+      Project r p -> loop r &&
+          case p of
+              Left s -> case r of
+                  RecordLit _ -> False
+                  _ -> not (Dhall.Set.null s) && Dhall.Set.isSorted s
+              Right e' -> case e' of
+                  Record _ -> False
+                  _ -> loop e'
       Note _ e' -> loop e'
       ImportAlt l _r -> loop l
       Embed _ -> True

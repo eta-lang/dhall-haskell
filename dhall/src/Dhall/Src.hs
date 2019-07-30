@@ -1,6 +1,8 @@
+{-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE TemplateHaskell    #-}
 
 -- | This module provides the `Src` type used for source spans in error messages
 
@@ -9,12 +11,15 @@ module Dhall.Src
       Src(..)
     ) where
 
+import Control.DeepSeq (NFData)
 import Data.Data (Data)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Prettyprint.Doc  (Pretty (..))
 import GHC.Generics (Generic)
-import Text.Megaparsec (SourcePos)
+import Instances.TH.Lift ()
+import Language.Haskell.TH.Syntax (Lift, lift)
+import Text.Megaparsec (SourcePos (SourcePos), mkPos, unPos)
 
 import {-# SOURCE #-} qualified Dhall.Util
 
@@ -25,7 +30,18 @@ import qualified Text.Printf     as Printf
 -- | Source code extract
 data Src = Src !SourcePos !SourcePos Text
   -- Text field is intentionally lazy
-  deriving (Data, Eq, Generic, Ord, Show)
+  deriving (Data, Eq, Generic, Ord, Show, NFData)
+
+
+instance Lift Src where
+    lift (Src (SourcePos a b c) (SourcePos d e f) g) =
+        [| Src (SourcePos a (mkPos b') (mkPos c')) (SourcePos d (mkPos e') (mkPos f')) g |]
+      where
+        b' = unPos b
+        c' = unPos c
+        e' = unPos e
+        f' = unPos f
+
 
 instance Pretty Src where
     pretty (Src begin _ text) =

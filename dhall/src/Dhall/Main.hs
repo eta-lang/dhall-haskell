@@ -363,14 +363,7 @@ command (Options {..}) = do
 
     handle $ case mode of
         Version -> do
-            let line₀ = "Haskell package version: "
-                    <>  Data.Text.pack (showVersion Meta.version)
-
-            let line₁ = "Standard version: "
-                    <>  Dhall.Binary.renderStandardVersion Dhall.Binary.defaultStandardVersion
-
-            Data.Text.IO.putStrLn line₀
-            Data.Text.IO.putStrLn line₁
+            putStrLn (showVersion Meta.version)
 
         Default {..} -> do
             expression <- getExpression file
@@ -438,7 +431,8 @@ command (Options {..}) = do
             mapM_ print
                  .   fmap (   Pretty.pretty
                           .   Dhall.Core.importType
-                          .   Dhall.Core.importHashed )
+                          .   Dhall.Core.importHashed
+                          .   Dhall.Import.chainedImport )
                  .   Data.Map.keys
                  $   _cache
 
@@ -529,7 +523,7 @@ command (Options {..}) = do
         Encode {..} -> do
             expression <- getExpression file
 
-            let term = Dhall.Binary.encode expression
+            let term = Dhall.Binary.encodeExpression expression
 
             let bytes = Codec.Serialise.serialise term
 
@@ -567,6 +561,7 @@ command (Options {..}) = do
                         Dhall.Core.throws (Codec.Serialise.deserialiseOrFail bytes)
 
             expression <- Dhall.Core.throws (Dhall.Binary.decodeExpression term)
+                :: IO (Expr Src Import)
 
             let doc = Dhall.Pretty.prettyCharacterSet characterSet expression
 
